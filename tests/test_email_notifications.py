@@ -85,6 +85,16 @@ class EmailTests(unittest.TestCase):
         smtp.send_message.assert_not_called()
         self.assertNotIn('private server response', str(result.exception))
 
+    def test_confirmed_delivery_survives_quit_timeout_without_resending(self):
+        smtp = Mock()
+        smtp.send_message.return_value = {}
+        smtp.quit.side_effect = TimeoutError('fixture private disconnect failure')
+        with patch('bridge.features.notifications.email.smtplib.SMTP', return_value=smtp):
+            publish_email(CONFIG, 'title', 'body')
+        smtp.send_message.assert_called_once()
+        smtp.quit.assert_called_once()
+        smtp.close.assert_called_once()
+
     def test_tls_connection_and_authentication_errors_are_sanitized(self):
         for error in (ssl.SSLCertVerificationError('fixture-private-password'),
                       smtplib.SMTPAuthenticationError(535, b'fixture-private-password')):

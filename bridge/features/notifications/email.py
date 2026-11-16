@@ -96,7 +96,7 @@ def publish_email(config, title, body, click=''):
         security = config['smtpSecurity']
         options = {'host': config['smtpHost'], 'port': config['smtpPort'], 'timeout': 12}
         smtp = smtplib.SMTP_SSL(**options, context=client_context()) if security == 'ssl' else smtplib.SMTP(**options)
-        with smtp:
+        try:
             smtp.ehlo()
             if security == 'starttls':
                 smtp.starttls(context=client_context())
@@ -106,6 +106,13 @@ def publish_email(config, title, body, click=''):
             rejected = smtp.send_message(message, from_addr=config['emailFrom'], to_addrs=recipients(config['emailTo']))
             if rejected:
                 raise EmailDeliveryError('部分收件邮箱被邮件服务器拒绝，请检查收件地址')
+            # DATA was acknowledged. A later QUIT failure must not replay mail.
+            try:
+                smtp.quit()
+            except (OSError, smtplib.SMTPException):
+                pass
+        finally:
+            smtp.close()
     except EmailDeliveryError:
         raise
     except smtplib.SMTPAuthenticationError:
