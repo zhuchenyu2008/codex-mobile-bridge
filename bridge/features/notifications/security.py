@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json, webhook_channel_config
+from bridge.features.notifications.email import publish_email
 
 
 class SecurityNotifications:
@@ -48,7 +49,7 @@ class SecurityNotifications:
                         publish_webhook(webhook_channel_config(current, channel), title, body, event='security.ip_blocked', event_id=hashlib.sha256(identifier.encode()).hexdigest(),
                                         host=current.get('addressName') or 'Codex Mobile Bridge', count=event['attempts'])
                     else:
-                        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](current, title, body)
+                        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus, 'email': publish_email}[channel](current, title, body)
                     record[target] = {'delivered': True, 'channel': channel, 'time': time.time()}
                 except Exception:
                     record[target] = {'delivered': False, 'channel': channel, 'next': time.time()+30,

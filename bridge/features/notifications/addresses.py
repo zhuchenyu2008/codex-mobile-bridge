@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from bridge.features.notifications.channels import channels, publish, publish_bark, publish_pushplus, publish_webhook, read_json, settings, write_json, webhook_channel_config
+from bridge.features.notifications.email import publish_email
 
 
 def gateway_ready(port, instance_id):
@@ -85,7 +86,7 @@ def send_address(config, channel, urls, first=False, test=False, event_id=''):
                         event_id=event_id or uuid.uuid4().hex,
                         host=config.get('addressName') or 'Codex Mobile Bridge', count=len(urls))
     else:
-        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel](config, title, body, urls[0])
+        {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus, 'email': publish_email}[channel](config, title, body, urls[0])
 
 
 class AddressNotifications:

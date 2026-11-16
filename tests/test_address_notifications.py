@@ -28,6 +28,18 @@ class AddressNotificationTests(unittest.TestCase):
                                       'addressName': 'Home computer', 'token': 'never-in-body',
                                       'clickBase': 'https://obsolete.example'})
 
+    def test_email_gateway_addresses_use_the_existing_delivery_ledger(self):
+        from test_email_notifications import CONFIG
+        save_settings(self.directory, {**CONFIG, 'enabled': False})
+        with patch('bridge.features.notifications.addresses.publish_email') as send:
+            self.manager.scan()
+            self.manager.scan()
+            self.assertEqual(send.call_count, 1)
+            self.assertEqual(send.call_args.args[3], A)
+            self.url = B
+            self.manager.scan()
+            self.assertEqual(send.call_count, 2)
+
     def test_defaults_enabled_and_explicit_disable_preserved(self):
         with tempfile.TemporaryDirectory(dir=ROOT/'.tmp') as directory:
             self.assertTrue(settings(directory)['addressEnabled'])

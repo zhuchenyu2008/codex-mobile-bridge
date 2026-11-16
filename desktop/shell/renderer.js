@@ -66,7 +66,8 @@ const gatewayFieldIds=new Set([
   'auth-mode','username','password','revoke-bound-devices','session-hours','origins','mobile-enabled','mobile-app-links',
   'security-enabled','address-enabled','address-name','pushplus-enabled','pushplus-token','clear-pushplus-token',
   'ntfy-enabled','ntfy-server','ntfy-topic','ntfy-token','clear-token','bark-enabled','bark-server','bark-key',
-  'clear-bark-key','click-base','include-title'
+  'clear-bark-key','click-base','include-title',
+  'email-enabled','smtp-host','smtp-port','smtp-security','smtp-username','smtp-password','clear-smtp-password','email-from','email-to'
 ]);
 function fields(){return [...$('settings').querySelectorAll('input,textarea,select')].filter(node=>gatewayFieldIds.has(node.id));}
 function fieldValue(node){return node.type==='checkbox'?node.checked:node.value;}
@@ -282,8 +283,8 @@ function render(value,watchRevision=watchPanel.revision){
   renderGatewayActions();
   $('login-summary').textContent=value.auth.mode==='none'?t('免密访问'):t('账号：')+value.auth.username;
   $('credentials').disabled=!value.credentialsAvailable;
-  const notificationsEnabled=value.notifications.enabled||value.notifications.barkEnabled||value.notifications.pushplusEnabled||value.notifications.webhookEndpoints?.some(row=>row.webhookEnabled)||value.notifications.webhookEnabled;
-  const channelKeys={'bark-enabled':'barkEnabled','ntfy-enabled':'enabled','pushplus-enabled':'pushplusEnabled','webhook-enabled':'webhookEnabled','mobile-enabled':'mobileEnabled'};
+  const notificationsEnabled=value.notifications.enabled||value.notifications.barkEnabled||value.notifications.pushplusEnabled||value.notifications.emailEnabled||value.notifications.webhookEndpoints?.some(row=>row.webhookEnabled)||value.notifications.webhookEnabled;
+  const channelKeys={'bark-enabled':'barkEnabled','ntfy-enabled':'enabled','pushplus-enabled':'pushplusEnabled','email-enabled':'emailEnabled','webhook-enabled':'webhookEnabled','mobile-enabled':'mobileEnabled'};
   for(const status of document.querySelectorAll('[data-notification-status]'))status.textContent=t((status.dataset.notificationStatus==='webhook-enabled'?value.notifications.webhookEndpoints?.some(row=>row.webhookEnabled):value.notifications[channelKeys[status.dataset.notificationStatus]])?'已启用':'未启用');
   const addressReady=value.notifications.addressEnabled&&notificationsEnabled;
   const addressHint=!value.notifications.addressEnabled?t('入口通知未开启，网关启动或地址变化时不会自动通知你。'):!notificationsEnabled?t('请启用至少一个通知通道，并发送测试通知。'):t('入口通知已开启，每次启动网关都会发送地址，入口变化后补发更新。请先确认手机能收到测试通知。');
@@ -296,7 +297,7 @@ function render(value,watchRevision=watchPanel.revision){
   $('update-address-state').textContent=addressHint;
   $('notification-summary').textContent=notificationsEnabled?t('已开启 · ')+value.watches.length+t(' 个关注聊天'):t('未开启');
   $('notification-state').textContent=value.runtime.running&&!value.runtime.supportsNotifications?t('当前网关版本较旧，重启后启用通知能力。'):t(value.notificationStatus.error)||t('手机关闭网页后，已关注聊天仍会继续提醒。');
-  for(const [channel,id] of [['ntfy','notification-detail'],['bark','bark-detail'],['pushplus','pushplus-detail'],['webhook','webhook-detail']]){
+  for(const [channel,id] of [['ntfy','notification-detail'],['bark','bark-detail'],['pushplus','pushplus-detail'],['email','email-detail'],['webhook','webhook-detail']]){
     const status=value.notificationStatus[channel]||(channel==='ntfy'?value.notificationStatus:{});
     $(id).textContent=t(status.error)||(status.lastSent?t('最近一次发送：')+new Date(status.lastSent*1000).toLocaleString(BridgeI18n.locale()):t('尚无发送记录'));
   }
@@ -319,12 +320,16 @@ function render(value,watchRevision=watchPanel.revision){
     $('ntfy-enabled').checked=n.enabled;input('ntfy-server',n.server);input('ntfy-topic',n.topic);input('click-base',n.clickBase);$('include-title').checked=n.includeTitle;
     $('bark-enabled').checked=!!n.barkEnabled;input('bark-server',n.barkServer||'https://api.day.app');
     $('pushplus-enabled').checked=!!n.pushplusEnabled;
+    $('email-enabled').checked=!!n.emailEnabled;
+    for(const [id,key] of [['smtp-host','smtpHost'],['smtp-username','smtpUsername'],['email-from','emailFrom'],['email-to','emailTo']])input(id,n[key]||'');
+    input('smtp-port',n.smtpPort??587);input('smtp-security',n.smtpSecurity||'starttls');
     $('security-enabled').checked=n.securityEnabled!==false;$('address-enabled').checked=!!n.addressEnabled;input('address-name',n.addressName||'');
     savedFields=fieldValues();
   }
   $('ntfy-token').placeholder=value.notifications.hasToken?t('已保存；留空保留，服务地址变化时清除'):t('如服务需要认证，在这里填写');
   $('bark-key').placeholder=value.notifications.hasBarkKey?t('已保存；留空保留，服务地址变化时清除'):t('填写 Bark App 中的 Device Key');
   $('pushplus-token').placeholder=value.notifications.hasPushplusToken?t('已保存，留空保留'):t('填写 PushPlus Token');
+  $('smtp-password').placeholder=value.notifications.hasSmtpPassword?t('已保存，留空保留'):t('SMTP 密码');
   if(!webhookCreating){if(!webhookRows().some(row=>row.webhookId===webhookSelectedId)&&(!webhookSavedFields||!webhookDirty()))webhookSelectedId=webhookRows()[0]?.webhookId||'legacy';const row=webhookRow();if(!webhookSavedFields||(JSON.stringify(row)!==webhookRenderedRowSignature&&!webhookDirty()))renderWebhookEditor(row);}
   renderWebhookCopy(webhookCreating?{}:webhookRow());
   renderWebhookList();
@@ -345,14 +350,14 @@ function render(value,watchRevision=watchPanel.revision){
 }
 let renderedSnapshot='',renderedDirty=false,renderedRevision=-1;
 async function refresh(force=false){if(loading||(document.hidden&&force!==true))return;loading=true;try{const revision=watchPanel.revision,networkRevision=networkAdaptationRevision,value=await api.snapshot();if(networkRevision!==networkAdaptationRevision)value.networkAdaptation=networkAdaptationState;const signature=JSON.stringify(value);if(signature!==renderedSnapshot||renderedDirty!==dirty||renderedRevision!==revision||startingUntil){render(value,revision);renderedSnapshot=signature;renderedDirty=dirty;renderedRevision=revision;}}catch(e){feedback(e.message,true);}finally{loading=false;}}
-function collect(){const rows=snapshot?.networkInterfaces||[],selected=rows.filter(row=>lanDraft.includes(row.id));return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanInterfaces:$('lan-scope').value==='all'?null:[...lanDraft],lanAddresses:$('lan-scope').value==='all'?null:[...new Set(selected.flatMap(row=>row.addresses||[]))],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
+function collect(){const rows=snapshot?.networkInterfaces||[],selected=rows.filter(row=>lanDraft.includes(row.id));return {...(snapshot?.loginStartup?.supported?{loginStartup:$('login-startup').checked}:{}),preferences:{autoStart:$('auto-start').checked,port:Number($('port').value),lan:$('lan').checked,lanInterfaces:$('lan-scope').value==='all'?null:[...lanDraft],lanAddresses:$('lan-scope').value==='all'?null:[...new Set(selected.flatMap(row=>row.addresses||[]))],localAccess:$('local-access').checked,connections:connectionDraft.map(row=>row.accessMode==='external'||row.accessMode==='nas'?{...row,publicUrl:normalizeExternalUrl(row.publicUrl||'')}:row),cloudflared:$('cloudflared').value.trim(),codexHome:$('codex-home').value.trim(),ipcPath:$('ipc-path').value.trim(),codexBin:$('codex-bin').value.trim()},auth:{sessionHours:Number($('session-hours').value),mode:$('auth-mode').value,username:$('username').value.trim(),password:submittedSecret('password'),revokeBoundDevices:$('revoke-bound-devices').checked},origins:$('origins').value.split('\n').map(s=>s.trim()).filter(Boolean),notifications:{emailEnabled:$('email-enabled').checked,smtpHost:$('smtp-host').value.trim(),smtpPort:Number($('smtp-port').value),smtpSecurity:$('smtp-security').value,smtpUsername:$('smtp-username').value.trim(),smtpPassword:submittedSecret('smtp-password'),clearSmtpPassword:$('clear-smtp-password').checked,emailFrom:$('email-from').value.trim(),emailTo:$('email-to').value.trim(),mobileEnabled:$('mobile-enabled').checked,mobileAppLinks:$('mobile-app-links').checked,securityEnabled:$('security-enabled').checked,addressEnabled:$('address-enabled').checked,addressName:$('address-name').value.trim(),pushplusEnabled:$('pushplus-enabled').checked,pushplusToken:submittedSecret('pushplus-token'),clearPushplusToken:$('clear-pushplus-token').checked,enabled:$('ntfy-enabled').checked,server:$('ntfy-server').value.trim(),topic:$('ntfy-topic').value.trim(),token:submittedSecret('ntfy-token'),clearToken:$('clear-token').checked,barkEnabled:$('bark-enabled').checked,barkServer:$('bark-server').value.trim(),barkKey:submittedSecret('bark-key'),clearBarkKey:$('clear-bark-key').checked,clickBase:$('click-base').value.trim(),includeTitle:$('include-title').checked}};}
 $('settings').onsubmit=async event=>{
   event.preventDefault();if(saving||busyActions.size)return;const invalid=[...$('settings').querySelectorAll('input,textarea,select')].find(node=>(gatewayFieldIds.has(node.id)||node.dataset.connectionField)&&!node.disabled&&!node.validity.valid&&(!node.closest('.connection-card')||connectionDraft.find(row=>row.id===node.closest('.connection-card').dataset.connectionId)?.enabled));if(invalid){focusField(invalid);feedback(invalid.validationMessage,true);return;}saving=true;$('save').disabled=true;const submitted=fieldValues(),submittedConnections=JSON.stringify(connectionDraft),submittedLan=JSON.stringify(lanDraft);
   try{
     const value=unwrapValidation(await api.save(collect()));savedFields={...submitted};savedConnections=submittedConnections;savedLan=submittedLan;
     // Edits made while saving must remain visibly unsaved.
-    for(const id of ['password','ntfy-token','bark-key','pushplus-token'])savedSecretValues.set(id,submitted[id]);
-    for(const id of ['clear-token','clear-bark-key','clear-pushplus-token']){if($(id).checked===submitted[id])$(id).checked=false;savedFields[id]=false;}
+    for(const id of ['password','ntfy-token','bark-key','pushplus-token','smtp-password'])savedSecretValues.set(id,submitted[id]);
+    for(const id of ['clear-token','clear-bark-key','clear-pushplus-token','clear-smtp-password']){if($(id).checked===submitted[id])$(id).checked=false;savedFields[id]=false;}
     await saveAllConnectionCredentials();
     updateDirty();render(value);await loadSavedSecrets(true);
     feedback(dirty?t('已保存提交的配置，仍有新修改待保存。'):t('配置已保存。通知设置由新版网关自动读取，登录设置在下次启动生效。'));
@@ -362,7 +367,7 @@ async function startGateway(){if(cloudflaredBusy||startPending||stopPending||sna
 async function stopGateway(){if(startPending||stopPending||!snapshot?.runtime.running)return;stopPending=true;renderGatewayActions();try{feedback((await api.stop()).message,false,'gateway');startingUntil=0;await refresh();}catch(e){feedback(e.message,true);}finally{stopPending=false;renderGatewayActions();}}
 for(const id of ['start','clients-start'])if($(id))$(id).onclick=startGateway;
 for(const id of ['stop','clients-stop'])if($(id))$(id).onclick=stopGateway;
-for(const [id,channel] of [['test-notification','ntfy'],['test-bark','bark'],['test-pushplus','pushplus'],['test-address','address']])$(id).onclick=async()=>{if(dirty){feedback(t('请先保存通知配置，再发送测试通知。'),true);return;}$(id).disabled=true;try{feedback((await api.testNotification({channel})).message);}catch(e){feedback(e.message,true);}finally{$(id).disabled=false;}};
+for(const [id,channel] of [['test-notification','ntfy'],['test-bark','bark'],['test-pushplus','pushplus'],['test-email','email'],['test-address','address']])$(id).onclick=async()=>{if(dirty){feedback(t('请先保存通知配置，再发送测试通知。'),true);return;}$(id).disabled=true;try{feedback((await api.testNotification({channel})).message);}catch(e){feedback(e.message,true);}finally{$(id).disabled=false;}};
 $('webhook-add').onclick=()=>{if(webhookSaving)return;if(webhookDirty()){feedback(t('请先保存或取消当前修改。'),true);return;}webhookCreating=true;webhookSelectedId='';renderWebhookEditor({webhookProvider:'auto',webhookBodyTemplate:webhookTemplates.generic,webhookTemplates});renderWebhookList();$('webhook-name').focus();};
 $('webhook-cancel').onclick=()=>{if(webhookSaving)return;webhookCreating=false;webhookSelectedId=webhookRows().some(row=>row.webhookId===webhookSelectedId)?webhookSelectedId:webhookRows()[0]?.webhookId||'legacy';renderWebhookEditor(webhookRow());renderWebhookList();};
 $('webhook-save').onclick=async()=>{
@@ -440,7 +445,7 @@ $('quick-setup').onclick=()=>{tab('network');$('cloudflared-repair').open=true;}
 $('cloudflared').oninput=()=>{renderCloudflared();updateDirty();};
 async function loadLogs(){try{$('log-output').textContent=(await api.logs()).text||t('暂无运行日志');$('log-output').scrollTop=0;}catch(e){feedback(e.message,true);}}
 $('refresh-logs').onclick=loadLogs;
-for(const id of ['password','ntfy-token','bark-key','pushplus-token'])secretControl($(id));
+for(const id of ['password','ntfy-token','bark-key','pushplus-token','smtp-password'])secretControl($(id));
 api.language().then(applyLanguage).catch(error=>feedback(error.message,true)).then(()=>refresh(true)).then(()=>{if(snapshot?.preferences.autoStart&&!snapshot.updateManaged&&!snapshot.runtime.running&&!snapshot.runtime.portOccupied)$('start').click();});
 let refreshTimer=setInterval(refresh,3000);
 document.addEventListener('visibilitychange',()=>{clearInterval(refreshTimer);refreshTimer=null;if(!document.hidden){refresh();refreshTimer=setInterval(refresh,3000);}});

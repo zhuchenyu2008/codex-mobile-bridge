@@ -12,7 +12,7 @@ from unittest.mock import patch
 import bridge.features.network.interfaces as network_interfaces
 from bridge.app.desktop import Desktop
 from bridge.features.auth.auth import Auth, LoginRejected
-from bridge.features.notifications.channels import settings
+from bridge.features.notifications.channels import settings, save_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 import bridge.features.network.interfaces as network_interfaces
@@ -69,6 +69,17 @@ class DesktopTests(unittest.TestCase):
         snapshot = self.desktop.snapshot()
         snapshot['preferences']['codexHome'] = str(self.directory)
         return snapshot
+
+    def test_email_snapshot_and_logs_mask_smtp_password(self):
+        from test_email_notifications import CONFIG
+        save_settings(self.directory, CONFIG)
+        visible = self.desktop.snapshot()['notifications']
+        self.assertEqual(visible['smtpPassword'], '')
+        self.assertTrue(visible['hasSmtpPassword'])
+        self.assertNotIn(CONFIG['smtpPassword'], json.dumps(visible))
+        self.assertEqual(self.desktop.read_credentials({})['smtpPassword'], CONFIG['smtpPassword'])
+        (self.directory/'gateway.log').write_text(CONFIG['smtpPassword'], encoding='utf-8')
+        self.assertNotIn(CONFIG['smtpPassword'], self.desktop.logs()['text'])
 
     def test_webhook_snapshot_masks_url_and_headers(self):
         from bridge.features.notifications.channels import save_settings

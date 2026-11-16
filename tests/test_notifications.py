@@ -104,6 +104,19 @@ class NotificationTests(unittest.TestCase):
         self.assertFalse(other_manager.policy(self.thread, 'remote')['notifyOnCompletion'])
         other_manager.close()
 
+    def test_email_delivery_deduplicates_and_tracks_recipient_changes(self):
+        from test_email_notifications import CONFIG
+        save_settings(self.directory, {**CONFIG, 'enabled': False})
+        with patch('bridge.features.notifications.channels.publish_email') as send:
+            self.manager.scan()
+            self.manager.scan()
+            self.assertEqual(send.call_count, 1)
+            self.assertNotIn('Private project', send.call_args.args[2])
+            self.assertIn(self.thread, send.call_args.args[3])
+            save_settings(self.directory, {'emailTo': 'another@example.test'})
+            self.manager.scan()
+            self.assertEqual(send.call_count, 2)
+
     def test_pushplus_token_validation_preservation_and_clear(self):
         with self.assertRaises(ValueError):
             save_settings(self.directory, {'pushplusEnabled': True})

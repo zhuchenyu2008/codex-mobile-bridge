@@ -17,6 +17,7 @@ from bridge.resources import project_root
 from bridge.features.auth.auth import Auth, password_record, session_hours, session_file_lock
 from bridge.app.lifecycle import read_record, request_stop, request_pairing
 from bridge.features.notifications.channels import Notifications, read_json, write_json, settings, save_settings, save_webhook_endpoint, webhook_config, publish, publish_bark, publish_pushplus, publish_webhook, visible_webhook, WebhookDeliveryError, resolved_webhook_provider
+from bridge.features.notifications.email import publish_email, EmailDeliveryError
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 from bridge.clients.codex.remote import AppHosts
 from bridge.clients.codex.catalog import Catalog
@@ -213,7 +214,7 @@ class Desktop:
                                        lan_addresses=static_addresses) if runtime['running'] else []
         notifications = settings(self.data_dir)
         return {'preferences': preferences, 'auth': {'username': config['auth'].get('username', 'admin'), 'mode': config['auth']['mode'], 'sessionHours': config['auth'].get('sessionHours', 12)},
-                'origins': config.get('origins', []), 'notifications': {**notifications, 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken']), **visible_webhook(notifications)},
+                'origins': config.get('origins', []), 'notifications': {**notifications, 'smtpPassword': '', 'hasSmtpPassword': bool(notifications['smtpPassword']), 'token': '', 'hasToken': bool(notifications['token']), 'barkKey': '', 'hasBarkKey': bool(notifications['barkKey']), 'pushplusToken': '', 'hasPushplusToken': bool(notifications['pushplusToken']), **visible_webhook(notifications)},
                 'watches': self.notification_watches({'action': 'list'}, preferences=preferences)['watches'],
                 'notificationUrls': notification_urls,
                 'securityNotificationStatus': read_json(self.data_dir/'security-notifications.json', {}),
@@ -504,10 +505,10 @@ class Desktop:
             return {'message': '已向启用通道发送当前入口，请在手机确认是否收到。'}
         channel = (value or {}).get('channel', 'ntfy')
         webhook_id = (value or {}).get('webhookId', 'legacy')
-        if channel not in ('ntfy', 'bark', 'pushplus', 'webhook'):
+        if channel not in ('ntfy', 'bark', 'pushplus', 'webhook', 'email'):
             raise ValueError('未知通知通道')
-        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus', 'webhook': 'Webhook'}[channel]
-        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus, 'webhook': publish_webhook}[channel]
+        name = {'bark': 'Bark', 'ntfy': 'ntfy', 'pushplus': 'PushPlus', 'webhook': 'Webhook', 'email': '邮件服务器'}[channel]
+        sender = {'bark': publish_bark, 'ntfy': publish, 'pushplus': publish_pushplus, 'webhook': publish_webhook, 'email': publish_email}[channel]
         config = settings(self.data_dir)
         if channel == 'webhook':
             config = webhook_config(config, webhook_id)
@@ -515,7 +516,7 @@ class Desktop:
             raise ValueError('Webhook 标识只适用于 Webhook 测试')
         try:
             sender(config, 'Codex 手机通知测试', f'收到这条消息表示 {name} 通道已连通。')
-        except WebhookDeliveryError as error:
+        except (WebhookDeliveryError, EmailDeliveryError) as error:
             raise ValueError(str(error)) from None
         except Exception:
             raise ValueError(f'{name} 测试失败，请检查服务地址、认证和网络') from None
@@ -549,7 +550,7 @@ class Desktop:
                 raise ValueError('请先保存连接配置。')
             return read(self.data_dir, value['id'])
         notification = settings(self.data_dir)
-        result = {key: notification[key] for key in ('token', 'barkKey', 'pushplusToken')}
+        result = {key: notification[key] for key in ('token', 'barkKey', 'pushplusToken', 'smtpPassword')}
         initial = self.data_dir/'首次登录.txt'
         result['password'] = ''
         if initial.exists():
@@ -641,7 +642,7 @@ class Desktop:
                     records[-1].append(line)
             sections.append({'name': label, 'text': '\n'.join('\n'.join(record) for record in reversed(records))})
         notifications = settings(self.data_dir)
-        secrets = [notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'),
+        secrets = [notifications.get('smtpPassword'), notifications.get('token'), notifications.get('barkKey'), notifications.get('pushplusToken'),
                    notifications.get('webhookSignSecret')]
         for entry in [notifications, *notifications.get('webhookEndpoints', [])]:
             webhook = entry.get('webhookUrl') or ''

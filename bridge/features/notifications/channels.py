@@ -1,5 +1,6 @@
 """Opt-in phone notifications. Watching a chat never changes its execution owner."""
 from bridge.features.notifications.providers import PROVIDERS, desktop_provider, desktop_client
+from bridge.features.notifications.email import EMAIL_DEFAULTS, EmailConfigError, merge_email_config, publish_email
 
 import hashlib
 import base64
@@ -20,7 +21,7 @@ from bridge.features.sessions.model import pending_requests, ordered_turns
 from bridge.features.auth.tls import client_context
 from bridge.features.auth.auth import session_file_lock
 
-DEFAULTS = {'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token': '',
+DEFAULTS = {**EMAIL_DEFAULTS, 'enabled': False, 'server': 'https://ntfy.sh', 'topic': '', 'token': '',
             'barkEnabled': False, 'barkServer': 'https://api.day.app', 'barkKey': '',
             'pushplusEnabled': False, 'pushplusToken': '',
             'webhookEnabled': False, 'webhookUrl': '', 'webhookHeaders': {},
@@ -302,6 +303,10 @@ def _save_settings_unlocked(data_dir, value):
         result['pushplusToken'] = '' if value.get('clearPushplusToken') else prior['pushplusToken']
     if result['pushplusEnabled'] and not result['pushplusToken']:
         raise FieldError('开启 PushPlus 前请填写 Token', 'pushplus-token')
+    try:
+        result.update(merge_email_config(prior, value))
+    except EmailConfigError as error:
+        raise FieldError(str(error), error.field) from None
     result.update(merge_webhook_config(prior, value))
     write_json(Path(data_dir)/'notifications.json', result)
     return result
@@ -559,6 +564,8 @@ def destination(config, channel):
         values = [config['barkServer'].rstrip('/'), config['barkKey']]
     elif channel == 'pushplus':
         values = [config.get('pushplusToken', '')]
+    elif channel == 'email':
+        values = [config.get(key, EMAIL_DEFAULTS[key]) for key in EMAIL_DEFAULTS if key != 'emailEnabled']
     elif channel == 'webhook':
         values = [config.get('webhookUrl', ''), sorted(config.get('webhookHeaders', {}).items()),
                   config.get('webhookProvider', 'auto'), resolved_webhook_provider(config),
@@ -571,7 +578,7 @@ def destination(config, channel):
 def channels(config):
     result = {name: destination(config, name) for name, enabled in
             (('ntfy', config['enabled']), ('bark', config['barkEnabled']), ('pushplus', config.get('pushplusEnabled', False)),
-             ('webhook', config.get('webhookEnabled', False))) if enabled}
+             ('webhook', config.get('webhookEnabled', False)), ('email', config.get('emailEnabled', False))) if enabled}
     for row in config.get('webhookEndpoints', []):
         if row['webhookEnabled']:
             name = 'webhook:' + row['webhookId']
@@ -1065,7 +1072,7 @@ class Notifications:
                                     session_name=title[:120] if config['includeTitle'] else '', client=client,
                                     host=row['host'], count=len(pending))
                 else:
-                    sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus}[channel]
+                    sender = {'ntfy': publish, 'bark': publish_bark, 'pushplus': publish_pushplus, 'email': publish_email}[channel]
                     sender(config, heading, body, click)
             success = True
         except Exception:

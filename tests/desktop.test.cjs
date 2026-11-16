@@ -474,6 +474,38 @@ test('desktop slow create adopts its ID while preserving edits made during save'
   await ui.nodes.get('webhook-save').onclick();assert.equal(payload.webhookId,'named-1');
 });
 
+test('SMTP settings render saved values and retain unchanged credentials',async()=>{
+  const ui=await renderer();
+  Object.assign(ui.value.notifications,{emailEnabled:true,smtpHost:'smtp.example.test',smtpPort:465,smtpSecurity:'ssl',smtpUsername:'sender@example.test',emailFrom:'sender@example.test',emailTo:'recipient@example.test',hasSmtpPassword:true});
+  await ui.poll();
+  ui.api.readCredentials=async()=>({smtpPassword:'fixture-private-password'});
+  for(const id of ['password','ntfy-token','bark-key','pushplus-token','smtp-password'])ui.nodes.get(id).id=id;
+  ui.run("fields=()=>['password','ntfy-token','bark-key','pushplus-token','smtp-password'].map($);savedFields=fieldValues()");
+  await ui.run('loadSavedSecrets(true)');
+  assert.equal(ui.nodes.get('smtp-host').value,'smtp.example.test');
+  assert.equal(ui.nodes.get('smtp-security').value,'ssl');
+  assert.equal(ui.nodes.get('smtp-password').value,'fixture-private-password');
+  assert.equal(ui.run('collect().notifications.smtpPassword'),'');
+  ui.nodes.get('smtp-password').value='replacement-password';
+  assert.equal(ui.run('collect().notifications.smtpPassword'),'replacement-password');
+  assert.equal(ui.run('collect().notifications.smtpPort'),465);
+  assert.equal(ui.run('collect().notifications.emailTo'),'recipient@example.test');
+  assert.equal(ui.run('collect().notifications.emailEnabled'),true);
+  ui.nodes.get('clear-smtp-password').checked=true;
+  assert.equal(ui.run('collect().notifications.clearSmtpPassword'),true);
+});
+
+test('email test uses the saved email channel and blocks unsaved edits',async()=>{
+  const ui=await renderer(),sent=[];
+  ui.api.testNotification=async payload=>{sent.push(payload.channel);return {message:'accepted'};};
+  await ui.nodes.get('test-email').onclick();
+  assert.deepEqual(sent,['email']);
+  ui.run('dirty=true');
+  await ui.nodes.get('test-email').onclick();
+  assert.deepEqual(sent,['email']);
+  assert.equal(ui.nodes.get('test-email').disabled,false);
+});
+
 test('ordinary desktop settings save omits every legacy Webhook field',async()=>{
   const ui=await renderer();await ui.poll();const notifications=ui.run('collect().notifications');
   assert.deepEqual(Object.keys(notifications).filter(key=>/^webhook|^clearWebhook/.test(key)),[]);
